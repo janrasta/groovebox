@@ -1,4 +1,4 @@
-# GrooveBox with FX
+# GrooveBox
 
 **A 16-track MIDI step sequencer for the M-Vave SMC-PAD**, in the spirit of the Digitakt and
 the BeatStep Pro: step and live recording, per-step velocity, micro-timing, probability and
@@ -23,7 +23,7 @@ made by running this sketch in the [SMC-PAD emulator](https://github.com/fedepaj
 - [The four modes](#the-four-modes)
 - [PLAY mode](#play-mode) · [STEP mode](#step-mode) · [Live recording](#live-recording) ·
   [MUTE mode](#mute-mode) · [PATTERN mode](#pattern-mode)
-- [FX page](#fx-page) · [Tempo and sync](#tempo-and-sync) · [Ableton Live](#ableton-live) · [Bluetooth](#bluetooth)
+- [FX page](#fx-page) · [Channel page](#channel-page) · [Tempo and sync](#tempo-and-sync) · [Ableton Live](#ableton-live) · [Bluetooth](#bluetooth)
 - [Reference: buttons](#buttons) · [knobs](#knobs) · [MIDI](#midi-implementation)
 - [Building, the emulator, design notes](#building-and-hacking)
 
@@ -213,6 +213,18 @@ With **pressure depth** on, the CC follows how hard you press, from the rest val
 
 The sequence effects only change what the pad plays: the MIDI clock out is not touched, so a DAW or synth following the pad keeps its tempo.
 
+## Channel page
+
+[#channel-page](#channel-page)
+
+**SHIFT + <** or **SHIFT + >** opens the channel page (< and > blink in turn); the same again, or a mode change, closes it.
+
+- **The 16 pads are the 16 tracks**, as in PLAY. Each lights in the **colour of its MIDI channel**, so tracks on the same channel share a colour; the selected track is bright.
+- **Tap a pad** to select that track and hear it on its channel (it plays its note, nothing is recorded). **< and >** select the previous / next track.
+- **Knob 1** sets the channel of the track(s) you hold, or of the selected track if none is held. Hold several pads to put them all on the same channel.
+- **Knob 2** moves **all 16 tracks** to one channel (starting from the selected track's), for sending a whole kit to one synth.
+- The pads show the channel while you turn: the lit pad is the channel, 1 to 16 from the bottom-left. The channels are saved with the pattern.
+
 ## Tempo and sync
 
 <img align="right" src="docs/img/tempo.gif" width="430" alt="Tempo">
@@ -262,7 +274,7 @@ and messages as over USB.
 | **BT** | hold: Bluetooth on / off | |
 | **PAD BANK** | STEP ↔ PLAY | MUTE mode |
 | **KNOB BANK** | knob page A ↔ B | PATTERN mode |
-| **<  >** | STEP: page · elsewhere: previous / next track | |
+| **<  >** | STEP: page · elsewhere: previous / next track | the [channel page](#channel-page) |
 | **PLAY** | start / stop (Live's, when synced to it) | the [FX page](#fx-page) |
 | **STOP** | stop (again: all notes off) | hold 1 s: kit back to notes 36–51, channel 10 |
 | **REC** | live recording on / off | hold 1 s: clear the selected track |
