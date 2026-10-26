@@ -253,9 +253,9 @@ static void aftertouch() {
   if (!settings.aftertouch || mode != MODE_PLAY || nrActive()) return;
   uint32_t now = millis();
   for (int pad = 0; pad < 16; pad++) {
-    if (!held[pad] || sentNote[pad] < 0 || now - lastAtMs[pad] < 20) continue;
+    if (!held[pad] || sentNote[pad] < 0 || now - lastAtMs[pad] < 50) continue;
     uint8_t level = pressureLevel(pad);
-    if (abs(level - lastAt[pad]) < 2) continue;
+    if (abs(level - lastAt[pad]) < 4) continue;
     midiSend(0xA0 | sentChannel[pad], sentNote[pad], level);
     lastAt[pad] = level;
     lastAtMs[pad] = now;
