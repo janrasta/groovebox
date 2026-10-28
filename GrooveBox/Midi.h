@@ -4,11 +4,14 @@
 #include <BLEMIDI.h>
 
 static bool bleStarted;
+static bool bleClockOut = false;   // BLE hosts rarely want clock; it floods the link
 
 static void midiSend(uint8_t status, uint8_t d1 = 0, uint8_t d2 = 0) {
   MidiUSB.sendMIDI({(uint8_t)(status >> 4), status, d1, d2});
   MidiUSB.flush();
-  if (bleStarted && BLEMIDI.connected()) BLEMIDI.send(status, d1, d2);
+  if (!bleStarted || !BLEMIDI.connected()) return;
+  if (status == 0xF8 && !bleClockOut) return;   // no clock over BLE
+  BLEMIDI.send(status, d1, d2);
 }
 
 static void noteOn(uint8_t ch, uint8_t note, uint8_t vel) { midiSend(0x90 | ch, note, vel); }

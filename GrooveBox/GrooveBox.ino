@@ -14,7 +14,7 @@
 // SHIFT + STOP (1 s) the kit back to notes 36-51 on channel 10,
 // KNOB BANK knob page (A: velocity, gate, length, speed, -, -, euclid hits, euclid rotation;
 // B: CCs 70-77), SHIFT + knobs 1-5: tempo, swing, pattern length, track note, track channel,
-// SHIFT + NOTE REPEAT: note repeat settings (as stock: rate, swing, latch, tap tempo) and the MIDI clock (out / in / off),
+// SHIFT + NOTE REPEAT: note repeat settings (as stock: rate, swing, latch, sync, tap tempo),
 // SHIFT + PLAY: the FX page (16 punch-in effects, knobs = their parameters),
 // SHIFT + < or >: the channel page (pads = tracks, coloured by MIDI channel; knob 1 the held
 // track's channel, knob 2 all tracks'),
@@ -257,9 +257,9 @@ static void aftertouch() {
   if (!settings.aftertouch || mode != MODE_PLAY || nrActive() || chPage) return;
   uint32_t now = millis();
   for (int pad = 0; pad < 16; pad++) {
-    if (!held[pad] || sentNote[pad] < 0 || now - lastAtMs[pad] < 20) continue;
+    if (!held[pad] || sentNote[pad] < 0 || now - lastAtMs[pad] < 50) continue;
     uint8_t level = pressureLevel(pad);
-    if (abs(level - lastAt[pad]) < 2) continue;
+    if (abs(level - lastAt[pad]) < 4) continue;
     midiSend(0xA0 | sentChannel[pad], sentNote[pad], level);
     lastAt[pad] = level;
     lastAtMs[pad] = now;

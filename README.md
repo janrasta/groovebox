@@ -1,4 +1,4 @@
-# GrooveBox
+# GrooveBox with 16 FX and channel change pages
 
 **A 16-track MIDI step sequencer for the M-Vave SMC-PAD**, in the spirit of the Digitakt and
 the BeatStep Pro: step and live recording, per-step velocity, micro-timing, probability and
