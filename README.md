@@ -23,7 +23,7 @@ made by running this sketch in the [SMC-PAD emulator](https://github.com/fedepaj
 - [The four modes](#the-four-modes)
 - [PLAY mode](#play-mode) · [STEP mode](#step-mode) · [Live recording](#live-recording) ·
   [MUTE mode](#mute-mode) · [PATTERN mode](#pattern-mode)
-- [Tempo and sync](#tempo-and-sync) · [Ableton Live](#ableton-live) · [Bluetooth](#bluetooth)
+- [FX page](#fx-page) · [Channel page](#channel-page) · [Tempo and sync](#tempo-and-sync) · [Ableton Live](#ableton-live) · [Bluetooth](#bluetooth)
 - [Reference: buttons](#buttons) · [knobs](#knobs) · [MIDI](#midi-implementation)
 - [Building, the emulator, design notes](#building-and-hacking)
 
@@ -182,6 +182,50 @@ Patterns live in the pad's flash and survive power-off and firmware updates.
 
 <br clear="right">
 
+## FX page
+
+[#fx-page](#fx-page)
+
+**SHIFT + PLAY** opens the FX page: all 16 pads are effects (PLAY blinks fast). An effect is on **while its pad is held**; **hold a pad and turn knobs 1–4 to change its parameters** (the pads show the value, as in STEP mode). Effects combine, start and stop on the next step, and the parameters are saved (when the sequencer is stopped). **SHIFT + PLAY** again, or a mode change, closes the page.
+
+Pads count from the bottom-left:
+
+| row (from the bottom) | pads 1–4 |
+|---|---|
+| 1 | stutter 1/4 · stutter 1/8 · stutter 1/16 · reverse |
+| 2 | half speed · double speed · roll · gate |
+| 3 | accent · duck · scatter · glitch |
+| 4 | drop · macro A · macro B · macro C |
+
+| FX | what it does | knobs while held (default) |
+|---|---|---|
+| **stutter** | loops the slice that is playing now | 1: decay per repeat, 0–50 % (0) |
+| **reverse** | every track plays backwards, micro-timing mirrored | |
+| **half / double speed** | the pattern as if it always ran that way, so it comes back in sync; both held: normal | |
+| **roll** | every hit ratchets | 1: ×2 / ×3 / ×4 (×3) |
+| **gate** | shorter notes | 1: length 10–100 % (30 %) |
+| **accent / duck** | louder / softer | 1: velocity added / taken off (+30 / −45) |
+| **scatter** | random hits dropped, and added on tracks that play | 1: drop 0–100 % (40) · 2: add 0–100 % (10) |
+| **glitch** | the playhead jumps to a random step | 1: every 1/4, 1/8, 1/16 (1/4) |
+| **drop** | mutes tracks | 1: 1–4, 5–8, 9–12, 13–16, all but the selected track (1–4) |
+| **macro A / B / C** | sends a CC on the selected track's channel: use it for your synth's filter, reverb, delay | 1: CC number · 2: value while held · 3: value at rest · 4: pressure depth on/off (A: CC 74, 20 / 127 · B: CC 91, 110 / 0 · C: CC 12, 100 / 0) |
+
+With **pressure depth** on, the CC follows how hard you press, from the rest value towards the held one; off, it jumps to the held value. Letting go always restores the rest value.
+
+The sequence effects only change what the pad plays: the MIDI clock out is not touched, so a DAW or synth following the pad keeps its tempo.
+
+## Channel page
+
+[#channel-page](#channel-page)
+
+**SHIFT + <** or **SHIFT + >** opens the channel page (< and > blink in turn); the same again, or a mode change, closes it.
+
+- **The 16 pads are the 16 tracks**, as in PLAY. Each lights in the **colour of its MIDI channel**, so tracks on the same channel share a colour; the selected track is bright.
+- **Tap a pad** to select that track and hear it on its channel (it plays its note, nothing is recorded). **< and >** select the previous / next track.
+- **Knob 1** sets the channel of the track(s) you hold, or of the selected track if none is held. Hold several pads to put them all on the same channel.
+- **Knob 2** moves **all 16 tracks** to one channel (starting from the selected track's), for sending a whole kit to one synth.
+- The pads show the channel while you turn: the lit pad is the channel, 1 to 16 from the bottom-left. The channels are saved with the pattern.
+
 ## Tempo and sync
 
 <img align="right" src="docs/img/tempo.gif" width="430" alt="Tempo">
@@ -236,8 +280,8 @@ and messages as over USB.
 | **BT** | hold: Bluetooth on / off | |
 | **PAD BANK** | STEP ↔ PLAY | MUTE mode |
 | **KNOB BANK** | knob page A ↔ B | PATTERN mode |
-| **<  >** | STEP: page · elsewhere: previous / next track | |
-| **PLAY** | start / stop (Live's, when synced to it) | |
+| **<  >** | STEP: page · elsewhere: previous / next track | the [channel page](#channel-page) |
+| **PLAY** | start / stop (Live's, when synced to it) | the [FX page](#fx-page) |
 | **STOP** | stop (again: all notes off) | hold 1 s: kit back to notes 36–51, channel 10 |
 | **REC** | live recording on / off | hold 1 s: clear the selected track |
 | **SHIFT** | the second layer | |
