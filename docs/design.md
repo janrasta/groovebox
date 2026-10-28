@@ -20,8 +20,10 @@ changes is shown on the pads while it changes.**
 - **16 patterns** per project, in flash. Switching is queued to the end of the current
   pattern; patterns can be chained (A -> B -> C, looping).
 - **Clock**: internal 30-300 BPM, or follow an incoming MIDI clock (USB / BLE) with
-  start / stop / continue. As master the pad sends clock, start and stop to every port, so a
-  DAW set to sync to it (Ableton: Sync on the SMC-PAD input) starts and stops with PLAY.
+  start / stop / continue. Three modes (`settings.clock`): OUT, the master, sends clock, start
+  and stop to every port, so a DAW set to sync to it (Ableton: Sync on the SMC-PAD input)
+  starts and stops with PLAY; IN follows and sends none; OFF runs on its own tempo and sends
+  none.
 
 ## Modes (the colours tell where you are)
 

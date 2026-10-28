@@ -163,7 +163,7 @@ def note_repeat():
     for p in (450, 650, 850, 950, 700, 400, 250):
         s.wait(300).pressure(6, p)
     s.caption("press harder: louder repeats").wait(300).pad_up(6).release(BUTTON.NOTE_REPEAT).wait(300)
-    s.caption("SHIFT + NOTE REPEAT: rate, swing, latch, sync, tap tempo").press(BUTTON.SHIFT).wait(80)
+    s.caption("SHIFT + NOTE REPEAT: rate, swing, latch, clock, tap tempo").press(BUTTON.SHIFT).wait(80)
     s.tap(BUTTON.NOTE_REPEAT, gap=200).release(BUTTON.SHIFT).wait(900)
     s.caption("pads 1-8 rate (1/4 .. 1/32T), 9-13 swing").tap_pad(6).wait(400).tap_pad(9).wait(900)
     s.tap(BUTTON.NOTE_REPEAT).wait(300)

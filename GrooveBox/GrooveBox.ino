@@ -397,7 +397,11 @@ static uint32_t nrPageLed(int pad) {
   if (pad < 8) return pad == settings.rate ? 0x00A0A0 : 0x001010;
   if (pad < 13) return pad - 8 == settings.swing ? 0xA000A0 : 0x100010;
   if (pad == 13) return settings.latch ? 0xA0A000 : 0x101000;
-  if (pad == 14) return settings.sync ? (extAlive() ? 0x00C000 : 0xC03000) : 0x001000;
+  if (pad == 14) {                                   // clock: OUT blue, IN green (orange: none
+    if (settings.clock == CLOCK_OUT) return 0x0040C0;   // coming in yet), OFF dim
+    if (settings.clock == CLOCK_IN) return extAlive() ? 0x00C000 : 0xC03000;
+    return 0x101010;
+  }
   uint32_t beatMs = 60000UL / bpm;
   return millis() % beatMs < beatMs / 4 ? 0x808080 : 0x080808;
 }
@@ -522,6 +526,15 @@ static void bluetoothApply() {
   }
 }
 
+// ---------------------------------------------------------------- MIDI clock mode
+
+static void clockSet(uint8_t m) {
+  if (clockOut && m != CLOCK_OUT && playing) midiSend(0xFC);   // followers: stop, no more clock
+  settings.clock = m;
+  syncExternal = m == CLOCK_IN;
+  clockOut = m == CLOCK_OUT;
+}
+
 // ---------------------------------------------------------------- pads
 
 static void onPadPress(int pad, int velocity) {
@@ -533,7 +546,7 @@ static void onPadPress(int pad, int velocity) {
     if (pad < 8) settings.rate = pad;
     else if (pad < 13) settings.swing = pad - 8;
     else if (pad == 13) { settings.latch = !settings.latch; nrToggled = false; }
-    else if (pad == 14) syncExternal = settings.sync = !settings.sync;
+    else if (pad == 14) clockSet((settings.clock + 1) % CLOCK_MODES);
     else tapTempo();
     settingsChanged();
     return;
@@ -931,7 +944,7 @@ void setup() {
   settingsLoad();
   fxLoad();
   bpm = settings.bpm;
-  syncExternal = settings.sync;
+  clockSet(settings.clock);
   storeBegin();
   currentSlot = settings.slot % PATTERNS;
   storeLoad(currentSlot, pattern);

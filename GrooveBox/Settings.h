@@ -4,10 +4,15 @@
 
 enum { CURVE_LINEAR = 0, CURVE_SOFT, CURVE_HARD, CURVE_FULL };
 
+// MIDI clock: OUT the pad is the master (sends clock, start, stop), IN it follows the incoming
+// clock and sends none, OFF its own tempo, sending and following none. (Was a bool "follow":
+// false = OUT, true = IN, so saved settings keep their meaning.)
+enum { CLOCK_OUT = 0, CLOCK_IN, CLOCK_OFF, CLOCK_MODES };
+
 struct Settings {
   uint32_t magic;
   uint16_t bpm;           // 30..300
-  bool sync;              // follow incoming MIDI clock
+  uint8_t clock;          // CLOCK_OUT / CLOCK_IN / CLOCK_OFF
   uint8_t slot;           // the pattern loaded at power up
   uint8_t curve;          // pad velocity curve
   int8_t transpose;       // PLAY mode pads, semitones -12..12
@@ -25,12 +30,13 @@ static Settings settings;
 static uint32_t settingsChangedAt;
 
 static void settingsDefaults() {
-  settings = Settings{SETTINGS_MAGIC, 120, false, 0, CURVE_LINEAR, 0, 0, 4, 0, false, true, false};
+  settings = Settings{SETTINGS_MAGIC, 120, CLOCK_OUT, 0, CURVE_LINEAR, 0, 0, 4, 0, false, true, false};
 }
 
 static void settingsLoad() {
   EEPROM.get(0, settings);
   if (settings.magic != SETTINGS_MAGIC) settingsDefaults();
+  if (settings.clock >= CLOCK_MODES) settings.clock = CLOCK_OUT;
 }
 
 static void settingsChanged() { settingsChangedAt = millis() | 1; }

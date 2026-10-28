@@ -100,8 +100,9 @@ recording, the repeats are recorded too: instant hi-hat rolls.
 
 - **NOTE REPEAT + knobs 1–4**: rate, swing, tempo, latch.
 - **SHIFT + NOTE REPEAT**: the settings on the pads — pads **1–8** rate (1/4, 1/4T, 1/8, 1/8T,
-  1/16, 1/16T, 1/32, 1/32T), **9–13** swing (off, 1–4), **14** latch, **15** sync to the
-  incoming MIDI clock, **16** tap tempo (it blinks in time). **NOTE REPEAT** closes the page.
+  1/16, 1/16T, 1/32, 1/32T), **9–13** swing (off, 1–4), **14** latch, **15** MIDI clock
+  (out / in / off, see [Tempo and sync](#tempo-and-sync)), **16** tap tempo (it blinks in
+  time). **NOTE REPEAT** closes the page.
 - With **latch** on, NOTE REPEAT toggles, and pads keep repeating after you let go; hit a pad
   again to stop it.
 
@@ -231,10 +232,14 @@ The sequence effects only change what the pad plays: the MIDI clock out is not t
 
 - **SHIFT + knob 1**: tempo (30–300 BPM); **SHIFT + knob 2**: swing of the pattern.
 - Tap tempo: SHIFT + NOTE REPEAT, then tap pad 16.
-- **The pad is the master** by default: it sends MIDI clock (also when stopped, so followers
-  know the tempo) and start / stop with **PLAY** / **STOP**.
-- **To follow another clock** (Ableton, a drum machine): SHIFT + NOTE REPEAT, **pad 15** (sync).
-  It turns green while a clock comes in; the pad then starts, stops and keeps time with it.
+- **MIDI clock**: SHIFT + NOTE REPEAT, **pad 15** steps through three modes (kept across power
+  cycles):
+  - **OUT** (blue, the default): the pad is the master. It sends MIDI clock (also when stopped,
+    so followers know the tempo) and start / stop with **PLAY** / **STOP**.
+  - **IN** (green while a clock comes in, orange while none does): the pad follows another
+    clock (Ableton, a drum machine) and starts, stops and keeps time with it. It sends no clock.
+  - **OFF** (dim): the pad's own tempo; it sends no clock and ignores incoming clock. For
+    Bluetooth to a host that does not sync, or a setup with another master.
 
 <br clear="right">
 
@@ -253,8 +258,9 @@ Setup:
    **SMC-PAD open fw**.
 3. MIDI ports, **SMC-PAD open fw**:
    - **Live leads** (recommended: Live's clock is steadiest): output **Sync** on, input Sync
-     off; on the pad, SHIFT + NOTE REPEAT → pad 15 (sync).
-   - **The pad leads**: input **Sync** on, output Sync off; Live follows PLAY on the pad.
+     off; on the pad, SHIFT + NOTE REPEAT → pad 15 to **IN** (green).
+   - **The pad leads**: input **Sync** on, output Sync off, pad 15 on **OUT** (blue); Live
+     follows PLAY on the pad.
    - Input **Track** on, so the notes reach your tracks.
 4. Select a track with a Drum Rack. The pads follow the selected (or armed) track's rack.
 
@@ -307,8 +313,8 @@ the steps instead ([STEP mode](#step-mode)).
 | notes | one per track (default 36–51), channel per track (default 10); note on/off with velocity, gate length |
 | aftertouch | polyphonic, from pad pressure (PLAY mode) |
 | CC | 70–77 from knob page B; 70–73 also from parameter locks |
-| clock | out: 24 PPQN, always (as master); in: followed when sync is on |
-| transport | out: Start / Stop; in: Start, Continue, Stop (when synced) |
+| clock | 24 PPQN; out in clock mode OUT (the default), followed in mode IN, neither in OFF |
+| transport | out: Start / Stop (mode OUT); in: Start, Continue, Stop (mode IN) |
 | SysEx | `F0 7D 53 50 …` — the Ableton script's Drum Rack picture, hello and transport ([protocol](ableton/SMC_PAD/SMC_PAD.py)) |
 
 Over USB and BLE-MIDI at once. (The 3.5 mm MIDI OUT is not driven yet.)
