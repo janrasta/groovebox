@@ -1,0 +1,642 @@
+diff --git a/GrooveBox/Engine.h b/GrooveBox/Engine.h
+index d5b7529..22b6101 100644
+--- a/GrooveBox/Engine.h
++++ b/GrooveBox/Engine.h
+@@ -68,12 +68,121 @@ static void flushEvents() {                         // stop: offs go out now, th
+   }
+ }
+ 
++// ---------------------------------------------------------------- FX (the FX page, while a pad is held)
++// SHIFT + PLAY: the 16 pads are 16 effects, on while held; knobs 1-4 edit the held FX's
++// parameters. They bend which step plays, how fast and how hard; the MIDI clock out is
++// untouched, so a synced DAW keeps time. The last three are CC macros (see the UI).
++
++enum {
++  FX_STUT_4, FX_STUT_8, FX_STUT_16, FX_REVERSE,     // pad n (from the bottom-left) is FX n
++  FX_HALF, FX_DOUBLE, FX_ROLL, FX_GATE,
++  FX_ACCENT, FX_DUCK, FX_SCATTER, FX_GLITCH,
++  FX_DROP, FX_MACRO_A, FX_MACRO_B, FX_MACRO_C,
++  FX_COUNT
++};
++
++struct FxDef {
++  uint8_t n;                                        // parameters (knobs 1..n)
++  uint8_t max[4];                                   // each 0..max
++  uint8_t def[4];
++  uint32_t color;
++};
++
++static const FxDef fxDef[FX_COUNT] = {
++  {1, {10, 0, 0, 0},   {0, 0, 0, 0},     0xFF3000},   // stutter 1/4:  decay per repeat (x5 %)
++  {1, {10, 0, 0, 0},   {0, 0, 0, 0},     0xFF7000},   // stutter 1/8
++  {1, {10, 0, 0, 0},   {0, 0, 0, 0},     0xFFB000},   // stutter 1/16
++  {0, {0, 0, 0, 0},    {0, 0, 0, 0},     0x2060FF},   // reverse
++  {0, {0, 0, 0, 0},    {0, 0, 0, 0},     0x8000FF},   // half speed
++  {0, {0, 0, 0, 0},    {0, 0, 0, 0},     0x00FF80},   // double speed
++  {1, {2, 0, 0, 0},    {1, 0, 0, 0},     0xFFE000},   // roll: every hit ratchets x2 / x3 / x4
++  {1, {9, 0, 0, 0},    {2, 0, 0, 0},     0xFF0080},   // gate: note length 10 + 10 n %
++  {1, {63, 0, 0, 0},   {30, 0, 0, 0},    0xE0E0E0},   // accent: velocity + n
++  {1, {95, 0, 0, 0},   {45, 0, 0, 0},    0x4060A0},   // duck: velocity - n
++  {2, {20, 20, 0, 0},  {8, 2, 0, 0},     0xFF00FF},   // scatter: drop (x5 %), add (x5 %)
++  {1, {2, 0, 0, 0},    {0, 0, 0, 0},     0x00FFFF},   // glitch: jump every 1/4, 1/8, 1/16
++  {1, {4, 0, 0, 0},    {0, 0, 0, 0},     0xFF0000},   // drop: mute tracks 1-4, 5-8, 9-12, 13-16, all but selected
++  {4, {127, 127, 127, 1}, {74, 20, 127, 1}, 0xA0FF00},  // macro: CC, value held, value at rest, pressure depth
++  {4, {127, 127, 127, 1}, {91, 110, 0, 1},  0x00FFA0},
++  {4, {127, 127, 127, 1}, {12, 100, 0, 1},  0x00A0FF},
++};
++
++static uint8_t fxParam[FX_COUNT][4];
++static uint16_t fxMask;                             // bit per FX held
++static uint8_t fxSlice, fxSlicePad;                 // stutter loop in 1/16 steps (4, 2, 1), 0 = off
++static uint32_t fxFrom;                             // pattern tick where the stutter loop starts
++static uint16_t fxSeed;                             // glitch: a new jump pattern per press
++static int8_t fxSolo;                               // drop: the track that stays
++
++static void fxParamDefaults() {
++  for (int i = 0; i < FX_COUNT; i++) for (int j = 0; j < 4; j++) fxParam[i][j] = fxDef[i].def[j];
++}
++
++static bool fxOn(int fx) { return fxMask & (1 << fx); }
++
++static void fxRealign() { fxFrom = 0; }             // transport / pattern start: ticks count from 0 again
++
++static void fxSet(int fx, bool on) {
++  if (fx < 0 || fx >= FX_COUNT) return;
++  if (on && !fxOn(fx) && fx == FX_GLITCH) fxSeed = random(65536);
++  if (on) fxMask |= 1 << fx; else fxMask &= ~(1 << fx);
++  static const uint8_t slices[3] = {4, 2, 1};
++  uint8_t slice = 0, pad = 0;
++  for (int i = 0; i < 3; i++) if (fxMask & (1 << i)) { slice = slices[i]; pad = i; }   // the shortest held wins
++  fxSlicePad = pad;
++  if (slice != fxSlice) {
++    fxSlice = slice;
++    uint32_t rel = tick - patternStartTick, len = slice * TICKS_PER_STEP;
++    fxFrom = slice ? rel - rel % len : 0;           // the slice playing now
++  }
++}
++
++static void fxReleaseAll() { for (int i = 0; i < FX_COUNT; i++) fxSet(i, false); }
++
+ // ---------------------------------------------------------------- steps
+ 
+ static uint32_t trackTicksPerStep(const Track &k) {
+-  return k.speed == SPEED_HALF ? 48 : k.speed == SPEED_DOUBLE ? 12 : 24;
++  uint32_t tps = k.speed == SPEED_HALF ? 48 : k.speed == SPEED_DOUBLE ? 12 : 24;
++  if (fxOn(FX_HALF) && !fxOn(FX_DOUBLE)) tps *= 2;
++  else if (fxOn(FX_DOUBLE) && !fxOn(FX_HALF)) tps /= 2;
++  return tps;
++}
++
++// the step of a track that plays at stepCount, with the stutter, glitch and reverse FX applied
++static int fxIndex(const Track &k, uint32_t stepCount, uint32_t tps) {
++  uint32_t s = stepCount;
++  if (fxSlice) {
++    uint32_t base = fxFrom / tps, loop = max(fxSlice * TICKS_PER_STEP / tps, 1u);
++    if (s >= base) s = base + (s - base) % loop;
++  }
++  if (fxOn(FX_GLITCH)) {                            // every n steps, jump to a pseudo-random step
++    static const uint8_t every[3] = {4, 2, 1};
++    uint32_t n = every[min(fxParam[FX_GLITCH][0], (uint8_t)2)];
++    uint32_t h = (s / n + fxSeed) * 2654435761u;
++    s = (h >> 8) % k.length + s % n;
++  }
++  int i = s % k.length;
++  return fxOn(FX_REVERSE) ? k.length - 1 - i : i;
+ }
+ 
++// stutter decay: how much softer this repeat is, in %
++static int fxDecayPct(uint32_t stepCount, uint32_t tps) {
++  if (!fxSlice) return 0;
++  uint32_t base = fxFrom / tps, loop = max(fxSlice * TICKS_PER_STEP / tps, 1u);
++  if (stepCount < base) return 0;
++  uint32_t pass = (stepCount - base) / loop;
++  uint32_t repeat = pass > 1 ? pass - 1 : 0;
++  return min((int)(repeat * fxParam[fxSlicePad][0] * 5), 95);
++}
++
++static bool fxDropped(int t) {
++  if (!fxOn(FX_DROP)) return false;
++  uint8_t g = fxParam[FX_DROP][0];
++  return g < 4 ? (t / 4 == g) : (t != fxSolo);          // a group of four, or everything but the selected track
++}
++
++static bool fxChance(uint8_t fiveP) { return (uint32_t)random(100) < (uint32_t)fiveP * 5; }
++
+ static bool conditionPasses(uint8_t cond, uint32_t loop) {
+   if (cond == COND_ALWAYS) return true;
+   if (cond <= COND_PROB_MAX) return (uint32_t)random(100) < cond;
+@@ -96,36 +205,57 @@ static bool conditionPasses(uint8_t cond, uint32_t loop) {
+ static int8_t skipStep[TRACKS] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+ static uint8_t lastPlayedStep[TRACKS];              // for the playhead
+ 
++static bool trackHasSteps(int t) {
++  const Track &k = pattern.track[t];
++  for (int i = 0; i < k.length; i++) if (pattern.step[t][i].flags & STEP_ON) return true;
++  return false;
++}
++
+ // the step that starts at stepCount (counted from the pattern start), scheduled from `start`
+ static void scheduleStep(int t, uint32_t stepCount, uint32_t start) {
+   Track &k = pattern.track[t];
+   uint32_t tps = trackTicksPerStep(k);
+-  int index = stepCount % k.length;
+-  Step &s = pattern.step[t][index];
+-  if (skipStep[t] == index) {                       // just recorded live: already heard
++  int index = fxIndex(k, stepCount, tps);
++  Step s = pattern.step[t][index];                  // a copy: the FX bend it
++  if (skipStep[t] == (int)(stepCount % k.length)) { // just recorded live: already heard
+     skipStep[t] = -1;
+     return;
+   }
+-  if (!(s.flags & STEP_ON) || k.muted) return;
++  if (k.muted || fxDropped(t)) return;
++  if (fxOn(FX_SCATTER)) {
++    if ((s.flags & STEP_ON) && fxChance(fxParam[FX_SCATTER][0])) return;       // dropped
++    if (!(s.flags & STEP_ON) && fxChance(fxParam[FX_SCATTER][1]) && trackHasSteps(t)) {
++      stepClear(s);                                 // an added hit on a track that plays
++      s.flags = STEP_ON;
++      s.velocity = k.velocity;
++    }
++  }
++  if (!(s.flags & STEP_ON)) return;
+   if (!conditionPasses(s.cond, stepCount / k.length)) return;
+-  int32_t at = (int32_t)start + s.micro * (int32_t)tps / 24;
++  int32_t micro = fxOn(FX_REVERSE) ? -s.micro : s.micro;   // backwards: early becomes late
++  int32_t at = (int32_t)start + micro * (int32_t)tps / 24;
+   if (stepCount & 1) at += tps * pattern.swing * 8 / 100;
+   if (at < (int32_t)tick) at = tick;
+   uint8_t ch = k.channel;
+-  uint32_t hitTicks = max(tps / s.ratchet, 1u);
+-  uint32_t gate = max(hitTicks * min(k.gate, (uint8_t)100) / 100, 1u);
+-  bool locked = false;
++  uint8_t ratchet = s.ratchet;
++  if (fxOn(FX_ROLL)) ratchet = max(ratchet, (uint8_t)(2 + fxParam[FX_ROLL][0]));
++  int vel = s.velocity;
++  if (fxOn(FX_ACCENT)) vel += fxParam[FX_ACCENT][0];
++  if (fxOn(FX_DUCK)) vel -= fxParam[FX_DUCK][0];
++  vel = vel * (100 - fxDecayPct(stepCount, tps)) / 100;
++  vel = constrain(vel, 1, 127);
++  uint32_t gatePct = fxOn(FX_GATE) ? 10 + 10 * fxParam[FX_GATE][0] : min(k.gate, (uint8_t)100);
++  uint32_t hitTicks = max(tps / ratchet, 1u);
++  uint32_t gate = max(hitTicks * gatePct / 100, 1u);
+   for (int i = 0; i < LOCKS; i++) {
+     if (s.lock[i] != NO_LOCK) {
+       schedule(at, EV_CC, 0xB0 | ch, k.lockCC[i], s.lock[i]);
+       schedule(at + tps - 1, EV_CC, 0xB0 | ch, k.lockCC[i], k.lockBase[i]);
+-      locked = true;
+     }
+   }
+-  (void)locked;
+-  for (uint32_t r = 0; r < s.ratchet; r++) {
++  for (uint32_t r = 0; r < ratchet; r++) {
+     uint32_t hit = at + r * hitTicks;
+-    schedule(hit, EV_NOTE_ON, 0x90 | ch, k.note, s.velocity, t);
++    schedule(hit, EV_NOTE_ON, 0x90 | ch, k.note, vel, t);
+     schedule(hit + gate, EV_NOTE_OFF, 0x80 | ch, k.note, 0);
+   }
+ }
+@@ -189,7 +319,7 @@ static void noteRepeatClock();                     // the UI's note repeat, 24 P
+ 
+ static void onTick() {
+   uint32_t rel = tick - patternStartTick;
+-  if (rel && rel % (TICKS_PER_STEP * pattern.length) == 0 && patternBoundary()) rel = 0;
++  if (rel && rel % (TICKS_PER_STEP * pattern.length) == 0 && patternBoundary()) { rel = 0; fxRealign(); }
+   if (tick % 4 == 0) {
+     if (clockOut) midiSend(0xF8);                   // clock out, 24 PPQN
+     noteRepeatClock();
+@@ -198,7 +328,7 @@ static void onTick() {
+     uint32_t tps = trackTicksPerStep(pattern.track[t]);
+     if (rel % tps) continue;
+     uint32_t stepCount = rel / tps;
+-    lastPlayedStep[t] = stepCount % pattern.track[t].length;
++    lastPlayedStep[t] = fxIndex(pattern.track[t], stepCount, tps);
+     // one step ahead (micro-timing can be early); at the pattern start, step 0 now too
+     if (rel == 0) scheduleStep(t, 0, tick);
+     scheduleStep(t, stepCount + 1, tick + tps);
+@@ -211,6 +341,7 @@ static void transportStart() {
+   if (playing) return;
+   playing = true;
+   tick = patternStartTick = 0;
++  fxRealign();
+   nextTickUs = micros();
+   if (clockOut) midiSend(0xFA);
+ }
+@@ -275,6 +406,7 @@ static void engineStartIn(bool fromZero) {
+   if (fromZero) {
+     flushEvents();
+     tick = patternStartTick = 0;
++    fxRealign();
+   }
+   extClocks = tick / 4;                             // continue: carry on from where we are
+   playing = true;
+diff --git a/GrooveBox/GrooveBox.ino b/GrooveBox/GrooveBox.ino
+index c73b3a4..be5efe3 100644
+--- a/GrooveBox/GrooveBox.ino
++++ b/GrooveBox/GrooveBox.ino
+@@ -15,6 +15,9 @@
+ // KNOB BANK knob page (A: velocity, gate, length, speed, -, -, euclid hits, euclid rotation;
+ // B: CCs 70-77), SHIFT + knobs 1-5: tempo, swing, pattern length, track note, track channel,
+ // SHIFT + NOTE REPEAT: note repeat settings (as stock: rate, swing, latch, tap tempo) and the MIDI clock (out / in / off),
++// SHIFT + PLAY: the FX page (16 punch-in effects, knobs = their parameters),
++// SHIFT + < or >: the channel page (pads = tracks, coloured by MIDI channel; knob 1 the held
++// track's channel, knob 2 all tracks'),
+ // NOTE REPEAT outside PLAY = fill, BT long press = Bluetooth.
+ // With Live's SMC_PAD control surface (ableton/SMC_PAD) the pads take the Drum Rack's colours
+ // and empty drum pads stay dark.
+@@ -34,6 +37,8 @@ static int stepPage;
+ static bool knobPageB;
+ static bool recording;
+ static bool nrPage;                                  // note repeat settings on the pads
++static bool fxPage;                                  // the FX page on the pads (SHIFT + PLAY)
++static bool chPage;                                  // the channel page on the pads (SHIFT + < or >)
+ static bool held[16];
+ static int8_t sentNote[16] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+ static uint8_t sentChannel[16];
+@@ -179,7 +184,7 @@ static uint32_t nrTriggerAt, nrGateOff[16];
+ static uint32_t nrNextUs;                            // own clock while the sequencer is stopped
+ 
+ static bool nrActive() {
+-  if (mode != MODE_PLAY || nrPage) return false;
++  if (mode != MODE_PLAY || nrPage || fxPage || chPage) return false;
+   return settings.latch ? nrToggled : SMCPad.button(B_REPEAT);
+ }
+ 
+@@ -249,7 +254,7 @@ static uint8_t lastAt[16];
+ static uint32_t lastAtMs[16];
+ 
+ static void aftertouch() {
+-  if (!settings.aftertouch || mode != MODE_PLAY || nrActive()) return;
++  if (!settings.aftertouch || mode != MODE_PLAY || nrActive() || chPage) return;
+   uint32_t now = millis();
+   for (int pad = 0; pad < 16; pad++) {
+     if (!held[pad] || sentNote[pad] < 0 || now - lastAtMs[pad] < 20) continue;
+@@ -261,6 +266,100 @@ static void aftertouch() {
+   }
+ }
+ 
++// ---------------------------------------------------------------- FX page (the engine has the FX)
++// Macros: the last three pads send a CC while held, on the selected track's channel. Held: the
++// CC goes to its "held" value (or, with pressure depth on, follows the pad's pressure from the
++// rest value towards it); let go: back to the rest value.
++
++static int8_t fxLast = -1;                          // the FX pad pressed last: its parameters are on the knobs
++static uint8_t macroCC[3], macroChannel[3], macroLast[3];
++static uint32_t macroAtMs[3];
++
++static void macroPress(int pad) {
++  int m = pad - FX_MACRO_A;
++  const uint8_t *p = fxParam[pad];
++  macroCC[m] = p[0];
++  macroChannel[m] = pattern.track[selectedTrack].channel;
++  macroLast[m] = p[3] ? p[2] : p[1];                // pressure depth starts at rest
++  cc(macroChannel[m], macroCC[m], macroLast[m]);
++  macroAtMs[m] = millis();
++}
++
++static void macroRelease(int pad) {
++  int m = pad - FX_MACRO_A;
++  macroLast[m] = fxParam[pad][2];
++  cc(macroChannel[m], macroCC[m], macroLast[m]);
++}
++
++static void macroRefresh(int pad) {                 // a parameter changed while held: hear it now
++  int m = pad - FX_MACRO_A;
++  if (fxParam[pad][3] || fxParam[pad][1] == macroLast[m]) return;   // pressure depth follows the pad itself
++  macroLast[m] = fxParam[pad][1];
++  cc(macroChannel[m], macroCC[m], macroLast[m]);
++}
++
++static void macroRun() {                            // pressure depth: follow the pad, not faster than 30 ms
++  uint32_t now = millis();
++  for (int m = 0; m < 3; m++) {
++    int pad = FX_MACRO_A + m;
++    if (!fxOn(pad) || !fxParam[pad][3] || now - macroAtMs[m] < 30) continue;
++    const uint8_t *p = fxParam[pad];
++    int v = p[2] + ((int)p[1] - (int)p[2]) * pressureLevel(pad) / 127;
++    if (v == macroLast[m]) continue;
++    macroLast[m] = v;
++    macroAtMs[m] = now;
++    cc(macroChannel[m], macroCC[m], v);
++  }
++}
++
++static void fxPress(int pad) {
++  fxSolo = selectedTrack;
++  fxLast = pad;
++  fxSet(pad, true);
++  if (pad >= FX_MACRO_A) macroPress(pad);
++}
++
++static void fxRelease(int pad) {
++  if (pad >= FX_MACRO_A && fxOn(pad)) macroRelease(pad);
++  fxSet(pad, false);
++}
++
++static void fxReleaseEverything() { for (int i = 0; i < FX_COUNT; i++) if (fxOn(i)) fxRelease(i); }
++
++// the FX whose parameters the knobs edit: the last pressed, else any other held
++static int fxEditPad() {
++  if (fxLast >= 0 && fxOn(fxLast)) return fxLast;
++  for (int i = FX_COUNT - 1; i >= 0; i--) if (fxOn(i)) return i;
++  return -1;
++}
++
++// the parameters survive a power cycle: EEPROM at 64 (the settings are at 0)
++static const int FX_EEPROM = 64;
++static const uint32_t FX_MAGIC = 0x47460001;        // "GF" v1
++struct FxSave { uint32_t magic; uint8_t p[FX_COUNT][4]; };
++static uint32_t fxChangedAt;
++
++static void fxParamsChanged() { fxChangedAt = millis() | 1; }
++
++static void fxLoad() {
++  FxSave f;
++  EEPROM.get(FX_EEPROM, f);
++  fxParamDefaults();
++  if (f.magic != FX_MAGIC) return;
++  for (int i = 0; i < FX_COUNT; i++)
++    for (int j = 0; j < fxDef[i].n; j++) fxParam[i][j] = min(f.p[i][j], fxDef[i].max[j]);
++}
++
++static void fxSaveWhenIdle() {                      // not while playing: a flash write stalls the clock
++  if (!fxChangedAt || playing || millis() - fxChangedAt < 2000) return;
++  FxSave f;
++  f.magic = FX_MAGIC;
++  memcpy(f.p, fxParam, sizeof(f.p));
++  EEPROM.put(FX_EEPROM, f);
++  EEPROM.commit();
++  fxChangedAt = 0;
++}
++
+ // ---------------------------------------------------------------- euclid
+ 
+ static void euclid(int t, int hits, int rotate) {
+@@ -307,6 +406,24 @@ static uint32_t nrPageLed(int pad) {
+   return millis() % beatMs < beatMs / 4 ? 0x808080 : 0x080808;
+ }
+ 
++// FX page: pad n is FX n, counting from the bottom-left. A held FX lights fully, the rest sit
++// dim in their own colour; a macro follows the pressure.
++static uint32_t fxPageLed(int pad) {
++  uint32_t c = fxDef[pad].color;
++  if (!fxOn(pad)) return scale(c, 1, 8);
++  if (pad >= FX_MACRO_A && fxParam[pad][3]) return scale(c, 40 + pressureLevel(pad), 167);   // brighter as you press
++  return c;
++}
++
++// Channel page: pad n is track n; its colour is the track's MIDI channel (the same colour = the
++// same channel). The selected track and a track being auditioned are bright.
++static const uint32_t chColor[16] = {0xFF0000, 0xFF6000, 0xFFBF00, 0xDFFF00, 0x80FF00, 0x20FF00, 0x00FF40, 0x00FF9F, 0x00FFFF, 0x009FFF, 0x0040FF, 0x2000FF, 0x8000FF, 0xDF00FF, 0xFF00BF, 0xFF0060};
++
++static uint32_t chPageLed(int pad) {
++  uint32_t c = chColor[pattern.track[pad].channel & 15];
++  return pad == selectedTrack || held[pad] ? c : scale(c, 1, 6);
++}
++
+ static uint32_t shiftPlayLed(int pad) {
+   if (pad < 8) return pad == selectedTrack ? scale(trackColor[pad], 1, 3) : 0;
+   if (pad < 12) return pad - 8 == settings.curve ? 0x603000 : 0x0C0600;
+@@ -318,6 +435,8 @@ static uint32_t padLed(int pad) {
+   uint32_t now = millis();
+   if (now < overlayUntil) return overlayLed(pad);
+   if (nrPage) return nrPageLed(pad);
++  if (fxPage) return fxPageLed(pad);
++  if (chPage) return chPageLed(pad);
+   bool shift = SMCPad.button(B_SHIFT);
+   switch (mode) {
+     case MODE_PLAY: {
+@@ -384,9 +503,10 @@ static void showButtonLeds() {
+   uint32_t mv = smcpad_battery_mv();
+   bool low = !smcpad_usb_power() && mv > 0 && mv < 3450 && blink;
+   int pages = (pattern.track[selectedTrack].length + 15) / 16;
+-  SMCPad.buttonLed(B_LEFT, low || SMCPad.button(B_LEFT) || (mode == MODE_STEP && stepPage > 0));
+-  SMCPad.buttonLed(B_RIGHT, low || SMCPad.button(B_RIGHT) || (mode == MODE_STEP && stepPage < pages - 1));
++  SMCPad.buttonLed(B_LEFT, low || SMCPad.button(B_LEFT) || (chPage && blink) || (!chPage && mode == MODE_STEP && stepPage > 0));
++  SMCPad.buttonLed(B_RIGHT, low || SMCPad.button(B_RIGHT) || (chPage && !blink) || (!chPage && mode == MODE_STEP && stepPage < pages - 1));
+   uint32_t beat = (tick - patternStartTick) % PPQN;
++  if (fxPage) SMCPad.buttonLed(B_PLAY, now % 200 < 100); else
+   SMCPad.buttonLed(B_PLAY, playing && beat < PPQN / 4 ? true : playing && beat >= PPQN / 4 ? (beat / 12) % 8 != 0 : false);
+   SMCPad.buttonLed(B_STOP, SMCPad.button(B_STOP));
+   SMCPad.buttonLed(B_REC, recording && (playing || blink));
+@@ -431,6 +551,16 @@ static void onPadPress(int pad, int velocity) {
+     settingsChanged();
+     return;
+   }
++  if (fxPage) {
++    fxPress(pad);
++    return;
++  }
++  if (chPage) {                                      // select the track, and hear it on its channel
++    selectedTrack = pad;
++    padNoteOn(pad, vel);
++    showValue(pattern.track[pad].channel, 15, chColor[pattern.track[pad].channel & 15]);
++    return;
++  }
+   bool shift = SMCPad.button(B_SHIFT);
+   switch (mode) {
+     case MODE_PLAY:
+@@ -494,6 +624,8 @@ static void onPadPress(int pad, int velocity) {
+ static void onPadRelease(int pad) {
+   held[pad] = false;
+   needShow = true;
++  if (fxOn(pad)) { fxRelease(pad); return; }       // an FX let go
++  if (chPage) { padNoteOff(pad); return; }
+   switch (mode) {
+     case MODE_PLAY:
+       if (latched[pad] && nrActive()) return;
+@@ -533,6 +665,9 @@ static void setMode(Mode m) {
+   if (m != MODE_PLAY) allPadNotesOff();
+   mode = m;
+   nrPage = false;
++  fxPage = false;
++  chPage = false;
++  fxReleaseEverything();
+   for (int i = 0; i < 16; i++) stepHeld[i] = false;
+   if (stepPage * 16 >= pattern.track[selectedTrack].length) stepPage = 0;
+   needShow = true;
+@@ -553,8 +688,15 @@ static void onButtonPress(int b) {
+       break;
+     case B_LEFT:
+     case B_RIGHT: {
++      if (shift) {                                     // SHIFT + < or >: the channel page
++        chPage = !chPage;
++        nrPage = fxPage = false;
++        fxReleaseEverything();
++        allPadNotesOff();
++        break;
++      }
+       int dir = b == B_LEFT ? -1 : 1;
+-      if (mode == MODE_STEP) {
++      if (mode == MODE_STEP && !chPage) {
+         int pages = (pattern.track[selectedTrack].length + 15) / 16;
+         stepPage = constrain(stepPage + dir, 0, pages - 1);
+         showValue(stepPage, pages - 1, trackColor[selectedTrack]);
+@@ -565,6 +707,13 @@ static void onButtonPress(int b) {
+       break;
+     }
+     case B_PLAY:
++      if (shift) {                                     // SHIFT + PLAY: the FX page
++        fxPage = !fxPage;
++        nrPage = false;
++        if (chPage) { chPage = false; allPadNotesOff(); }
++        if (!fxPage) fxReleaseEverything();
++        break;
++      }
+       if (syncExternal && abletonActive) { abletonTransport(!playing); break; }   // Live leads
+       if (extAlive()) break;                           // the external clock is in charge
+       if (playing) transportStop(); else transportStart();
+@@ -580,7 +729,12 @@ static void onButtonPress(int b) {
+       recording = !recording;
+       break;
+     case B_REPEAT:
+-      if (shift) { nrPage = !nrPage; break; }
++      if (shift) {
++        nrPage = !nrPage;
++        if (nrPage) { fxPage = false; fxReleaseEverything(); }
++        if (chPage) { chPage = false; allPadNotesOff(); }
++        break;
++      }
+       if (nrPage) { nrPage = false; break; }
+       if (mode != MODE_PLAY) { fillHeld = true; break; }
+       if (settings.latch) {
+@@ -697,8 +851,43 @@ static void knobPageBTurn(int knob, int delta) {
+   }
+ }
+ 
++// FX page, an FX pad held: knobs 1-4 are its parameters
++static void fxKnob(int knob, int delta) {
++  int pad = fxEditPad();
++  if (pad < 0 || knob >= fxDef[pad].n) return;
++  uint8_t max = fxDef[pad].max[knob];
++  int steps = knobSteps(knob, delta, max < 16 ? 2 : 1);
++  if (!steps) return;
++  int inc = max >= 32 && !(pad >= FX_MACRO_A && knob == 0) ? 2 : 1;   // a macro's CC number goes one by one
++  int v = constrain((int)fxParam[pad][knob] + steps * inc, 0, (int)max);
++  fxParam[pad][knob] = v;
++  if (pad >= FX_MACRO_A) macroRefresh(pad);
++  showValue(v, max, fxDef[pad].color);
++  fxParamsChanged();
++}
++
++// Channel page: knob 1 = the channel of the held tracks (else the selected one), knob 2 = all tracks
++static void chKnob(int knob, int delta) {
++  if (knob > 1) return;
++  int steps = knobSteps(knob, delta, 2);
++  if (!steps) return;
++  int ch = constrain(pattern.track[selectedTrack].channel + steps, 0, 15);
++  if (knob == 1) {
++    for (int t = 0; t < TRACKS; t++) pattern.track[t].channel = ch;
++  } else {
++    bool any = false;
++    for (int t = 0; t < TRACKS; t++) if (held[t]) { pattern.track[t].channel = ch; any = true; }   // all held: the same channel
++    if (!any) pattern.track[selectedTrack].channel = ch;
++  }
++  patternDirty = true;
++  ch = pattern.track[selectedTrack].channel;
++  showValue(ch, 15, chColor[ch & 15]);
++}
++
+ static void onKnob(int knob, int delta) {
+   needShow = true;
++  if (fxPage && fxMask) { fxKnob(knob, delta); return; }
++  if (chPage) { chKnob(knob, delta); return; }
+   if (SMCPad.button(B_SHIFT) && knob < 5) {           // setup: global, and the track's voice
+     int steps = knobSteps(knob, delta, knob == 0 || knob == 3 ? 1 : 2);
+     if (!steps) return;
+@@ -753,6 +942,7 @@ static void midiIn() {
+ 
+ void setup() {
+   settingsLoad();
++  fxLoad();
+   bpm = settings.bpm;
+   clockSet(settings.clock);
+   storeBegin();
+@@ -778,6 +968,7 @@ void loop() {
+   engineRun();
+   noteRepeatRun();
+   aftertouch();
++  macroRun();
+   uint32_t now = millis();
+   if (btDownAt && now - btDownAt > 800) {
+     btDownAt = 0;
+@@ -810,4 +1001,5 @@ void loop() {
+   showPads();
+   showButtonLeds();
+   settingsSaveWhenIdle();
++  fxSaveWhenIdle();
+ }
+diff --git a/README.md b/README.md
+index 74275a4..bb41f8a 100644
+--- a/README.md
++++ b/README.md
+@@ -23,7 +23,7 @@ made by running this sketch in the [SMC-PAD emulator](https://github.com/fedepaj
+ - [The four modes](#the-four-modes)
+ - [PLAY mode](#play-mode) · [STEP mode](#step-mode) · [Live recording](#live-recording) ·
+   [MUTE mode](#mute-mode) · [PATTERN mode](#pattern-mode)
+-- [Tempo and sync](#tempo-and-sync) · [Ableton Live](#ableton-live) · [Bluetooth](#bluetooth)
++- [FX page](#fx-page) · [Channel page](#channel-page) · [Tempo and sync](#tempo-and-sync) · [Ableton Live](#ableton-live) · [Bluetooth](#bluetooth)
+ - [Reference: buttons](#buttons) · [knobs](#knobs) · [MIDI](#midi-implementation)
+ - [Building, the emulator, design notes](#building-and-hacking)
+ 
+@@ -182,6 +182,50 @@ Patterns live in the pad's flash and survive power-off and firmware updates.
+ 
+ <br clear="right">
+ 
++## FX page
++
++[#fx-page](#fx-page)
++
++**SHIFT + PLAY** opens the FX page: all 16 pads are effects (PLAY blinks fast). An effect is on **while its pad is held**; **hold a pad and turn knobs 1–4 to change its parameters** (the pads show the value, as in STEP mode). Effects combine, start and stop on the next step, and the parameters are saved (when the sequencer is stopped). **SHIFT + PLAY** again, or a mode change, closes the page.
++
++Pads count from the bottom-left:
++
++| row (from the bottom) | pads 1–4 |
++|---|---|
++| 1 | stutter 1/4 · stutter 1/8 · stutter 1/16 · reverse |
++| 2 | half speed · double speed · roll · gate |
++| 3 | accent · duck · scatter · glitch |
++| 4 | drop · macro A · macro B · macro C |
++
++| FX | what it does | knobs while held (default) |
++|---|---|---|
++| **stutter** | loops the slice that is playing now | 1: decay per repeat, 0–50 % (0) |
++| **reverse** | every track plays backwards, micro-timing mirrored | |
++| **half / double speed** | the pattern as if it always ran that way, so it comes back in sync; both held: normal | |
++| **roll** | every hit ratchets | 1: ×2 / ×3 / ×4 (×3) |
++| **gate** | shorter notes | 1: length 10–100 % (30 %) |
++| **accent / duck** | louder / softer | 1: velocity added / taken off (+30 / −45) |
++| **scatter** | random hits dropped, and added on tracks that play | 1: drop 0–100 % (40) · 2: add 0–100 % (10) |
++| **glitch** | the playhead jumps to a random step | 1: every 1/4, 1/8, 1/16 (1/4) |
++| **drop** | mutes tracks | 1: 1–4, 5–8, 9–12, 13–16, all but the selected track (1–4) |
++| **macro A / B / C** | sends a CC on the selected track's channel: use it for your synth's filter, reverb, delay | 1: CC number · 2: value while held · 3: value at rest · 4: pressure depth on/off (A: CC 74, 20 / 127 · B: CC 91, 110 / 0 · C: CC 12, 100 / 0) |
++
++With **pressure depth** on, the CC follows how hard you press, from the rest value towards the held one; off, it jumps to the held value. Letting go always restores the rest value.
++
++The sequence effects only change what the pad plays: the MIDI clock out is not touched, so a DAW or synth following the pad keeps its tempo.
++
++## Channel page
++
++[#channel-page](#channel-page)
++
++**SHIFT + <** or **SHIFT + >** opens the channel page (< and > blink in turn); the same again, or a mode change, closes it.
++
++- **The 16 pads are the 16 tracks**, as in PLAY. Each lights in the **colour of its MIDI channel**, so tracks on the same channel share a colour; the selected track is bright.
++- **Tap a pad** to select that track and hear it on its channel (it plays its note, nothing is recorded). **< and >** select the previous / next track.
++- **Knob 1** sets the channel of the track(s) you hold, or of the selected track if none is held. Hold several pads to put them all on the same channel.
++- **Knob 2** moves **all 16 tracks** to one channel (starting from the selected track's), for sending a whole kit to one synth.
++- The pads show the channel while you turn: the lit pad is the channel, 1 to 16 from the bottom-left. The channels are saved with the pattern.
++
+ ## Tempo and sync
+ 
+ <img align="right" src="docs/img/tempo.gif" width="430" alt="Tempo">
+@@ -236,8 +280,8 @@ and messages as over USB.
+ | **BT** | hold: Bluetooth on / off | |
+ | **PAD BANK** | STEP ↔ PLAY | MUTE mode |
+ | **KNOB BANK** | knob page A ↔ B | PATTERN mode |
+-| **<  >** | STEP: page · elsewhere: previous / next track | |
+-| **PLAY** | start / stop (Live's, when synced to it) | |
++| **<  >** | STEP: page · elsewhere: previous / next track | the [channel page](#channel-page) |
++| **PLAY** | start / stop (Live's, when synced to it) | the [FX page](#fx-page) |
+ | **STOP** | stop (again: all notes off) | hold 1 s: kit back to notes 36–51, channel 10 |
+ | **REC** | live recording on / off | hold 1 s: clear the selected track |
+ | **SHIFT** | the second layer | |
